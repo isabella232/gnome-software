@@ -138,7 +138,7 @@ else
   valgrind = []
 endif
 
-gsettings_desktop_schemas = dependency('gsettings-desktop-schemas', version : '>= 3.18.0', required: get_option('gsettings-desktop-schemas'))
+gsettings_desktop_schemas = dependency('gsettings-desktop-schemas', version : '>= 3.18.0', required: get_option('gsettings_desktop_schemas'))
 if gsettings_desktop_schemas.found()
   conf.set('HAVE_GSETTINGS_DESKTOP_SCHEMAS', 1)
 endif
