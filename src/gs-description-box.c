@@ -13,7 +13,7 @@
  * @short_description: Show description text in a way that can show more/less lines
  *
  * Show a description in an expandable form with "Read More" button when
- * there are too many lines to be shown. The butotn is hiddne when
+ * there are too many lines to be shown. The button is hidden when
  * the description is short enough. The button changes to "Read Less"
  * to be able to collapse it.
  */
