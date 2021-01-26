@@ -763,7 +763,7 @@ gs_flatpak_cover_addons_in_transaction (GsPlugin *plugin,
 					g_string_append_c (errors, '\n');
 				else
 					errors = g_string_new (NULL);
-				g_string_append_printf (errors, _("Failed to add to install for addon '%s': %s"),
+				g_string_append_printf (errors, _("Failed to add to install for addon ‘%s’: %s"),
 					gs_app_get_name (addon), local_error->message);
 			}
 		} else if (state == GS_APP_STATE_REMOVING && gs_app_get_state (addon) == GS_APP_STATE_INSTALLED) {
@@ -777,7 +777,7 @@ gs_flatpak_cover_addons_in_transaction (GsPlugin *plugin,
 					g_string_append_c (errors, '\n');
 				else
 					errors = g_string_new (NULL);
-				g_string_append_printf (errors, _("Failed to add to uninstall for addon '%s': %s"),
+				g_string_append_printf (errors, _("Failed to add to uninstall for addon ‘%s’: %s"),
 					gs_app_get_name (addon), local_error->message);
 			}
 		}

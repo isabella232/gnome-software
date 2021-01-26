@@ -2763,7 +2763,7 @@ gs_flatpak_refine_addons (GsFlatpak *self,
 				g_string_append_c (errors, '\n');
 			else
 				errors = g_string_new (NULL);
-			g_string_append_printf (errors, _("Failed to refine addon '%s': %s"),
+			g_string_append_printf (errors, _("Failed to refine addon ‘%s’: %s"),
 				gs_app_get_name (addon), local_error->message);
 		}
 	}
