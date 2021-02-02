@@ -61,6 +61,7 @@ main (int argc, char **argv)
 #endif
 		     NULL);
 	g_setenv ("G_MESSAGES_DEBUG", "all", TRUE);
+	g_setenv ("GSETTINGS_BACKEND", "memory", TRUE);
 	g_setenv ("GS_SELF_TEST_DUMMY_ENABLE", "1", TRUE);
 
 	xml = g_strdup_printf ("<?xml version=\"1.0\"?>\n"

@@ -751,6 +751,7 @@ main (int argc, char **argv)
 #endif
 		     NULL);
 	g_setenv ("G_MESSAGES_DEBUG", "all", TRUE);
+	g_setenv ("GSETTINGS_BACKEND", "memory", TRUE);
 	g_setenv ("GS_XMLB_VERBOSE", "1", TRUE);
 
 	/* set all the things required as a dummy test harness */

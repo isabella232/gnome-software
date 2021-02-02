@@ -53,6 +53,7 @@ main (int argc, char **argv)
 #endif
 		     NULL);
 	g_setenv ("G_MESSAGES_DEBUG", "all", TRUE);
+	g_setenv ("GSETTINGS_BACKEND", "memory", TRUE);
 
 	/* dummy data */
 	reposdir = gs_test_get_filename (TESTDATADIR, "yum.repos.d");
