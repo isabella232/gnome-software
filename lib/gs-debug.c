@@ -30,16 +30,13 @@ gs_log_writer_console (GLogLevelFlags log_level,
 		       gpointer user_data)
 {
 	GsDebug *debug = GS_DEBUG (user_data);
+	const gchar *domains = NULL;
+	const gchar *gs_debug = NULL;
 	const gchar *log_domain = NULL;
 	const gchar *log_message = NULL;
 	g_autofree gchar *tmp = NULL;
 	g_autoptr(GMutexLocker) locker = NULL;
 	g_autoptr(GString) domain = NULL;
-
-	/* enabled */
-	if (g_getenv ("GS_DEBUG") == NULL &&
-	    log_level == G_LOG_LEVEL_DEBUG)
-		return G_LOG_WRITER_HANDLED;
 
 	/* get data from arguments */
 	for (gsize i = 0; i < n_fields; i++) {
@@ -53,6 +50,19 @@ gs_log_writer_console (GLogLevelFlags log_level,
 		}
 	}
 
+	domains = g_getenv ("G_MESSAGES_DEBUG");
+	gs_debug = g_getenv ("GS_DEBUG");
+
+	/* enabled */
+	if (log_level == G_LOG_LEVEL_DEBUG &&
+	    gs_debug == NULL) {
+		if (domains == NULL)
+			return G_LOG_WRITER_HANDLED;
+
+		if (
+	}
+
+	if (domains != NULL
 	/* this is really verbose */
 	if ((g_strcmp0 (log_domain, "dconf") == 0 ||
 	     g_strcmp0 (log_domain, "GLib-GIO") == 0 ||
