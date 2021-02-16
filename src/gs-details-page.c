@@ -53,6 +53,7 @@ struct _GsDetailsPage
 	GsApp			*app_local_file;
 	GsShell			*shell;
 	SoupSession		*session;
+	gboolean		 plugin_enabled;
 	gboolean		 enable_reviews;
 	gboolean		 show_all_reviews;
 	GSettings		*settings;
@@ -1549,6 +1550,21 @@ gs_details_page_app_set_review_cb (GObject *source,
 	gs_details_page_refresh_reviews (helper->self);
 }
 
+static gboolean
+gs_details_page_get_enable_reviews (GsDetailsPage *self)
+{
+	if (self->plugin_enabled) {
+		self->plugin_enabled = FALSE;
+
+		/* show review widgets if we have plugins that provide them */
+		self->enable_reviews =
+			gs_plugin_loader_get_plugin_supported (self->plugin_loader,
+							       "gs_plugin_review_submit");
+	}
+
+	return self->enable_reviews;
+}
+
 static void
 gs_details_page_review_button_clicked_cb (GsReviewRow *row,
                                           GsPluginAction action,
@@ -1606,7 +1622,7 @@ gs_details_page_refresh_reviews (GsDetailsPage *self)
 	case AS_COMPONENT_KIND_WEB_APP:
 		/* don't show a missing rating on a local file */
 		if (gs_app_get_state (self->app) != GS_APP_STATE_AVAILABLE_LOCAL &&
-		    self->enable_reviews)
+		    gs_details_page_get_enable_reviews (self))
 			show_reviews = TRUE;
 		break;
 	default:
@@ -2689,6 +2705,14 @@ gs_details_page_network_available_notify_cb (GsPluginLoader *plugin_loader,
 }
 
 static void
+gs_details_page_plugin_enabled_cb (GsPluginLoader *plugin_loader,
+				   GsPlugin *plugin,
+				   GsDetailsPage *self)
+{
+	self->plugin_enabled = TRUE;
+}
+
+static void
 gs_details_page_star_pressed_cb(GtkWidget *widget, GdkEventButton *event, GsDetailsPage *self)
 {
 	gs_details_page_write_review_cb(GTK_BUTTON (self->button_review), self);
@@ -2713,11 +2737,8 @@ gs_details_page_setup (GsPage *page,
 	self->plugin_loader = g_object_ref (plugin_loader);
 	self->builder = g_object_ref (builder);
 	self->cancellable = g_object_ref (cancellable);
+	self->plugin_enabled = TRUE;
 
-	/* show review widgets if we have plugins that provide them */
-	self->enable_reviews =
-		gs_plugin_loader_get_plugin_supported (plugin_loader,
-						       "gs_plugin_review_submit");
 	g_signal_connect (self->button_review, "clicked",
 			  G_CALLBACK (gs_details_page_write_review_cb),
 			  self);
@@ -2728,6 +2749,10 @@ gs_details_page_setup (GsPage *page,
 	/* hide some UI when offline */
 	g_signal_connect_object (self->plugin_loader, "notify::network-available",
 				 G_CALLBACK (gs_details_page_network_available_notify_cb),
+				 self, 0);
+
+	g_signal_connect_object (self->plugin_loader, "plugin-enabled",
+				 G_CALLBACK (gs_details_page_plugin_enabled_cb),
 				 self, 0);
 
 	/* setup details */

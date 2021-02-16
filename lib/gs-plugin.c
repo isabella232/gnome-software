@@ -80,6 +80,7 @@ G_DEFINE_QUARK (gs-plugin-error-quark, gs_plugin_error)
 enum {
 	PROP_0,
 	PROP_FLAGS,
+	PROP_ENABLED,
 	PROP_LAST
 };
 
@@ -353,7 +354,10 @@ void
 gs_plugin_set_enabled (GsPlugin *plugin, gboolean enabled)
 {
 	GsPluginPrivate *priv = gs_plugin_get_instance_private (plugin);
-	priv->enabled = enabled;
+	if (priv->enabled != enabled) {
+		priv->enabled = enabled;
+		g_object_notify (G_OBJECT (plugin), "enabled");
+	}
 }
 
 void
@@ -1946,6 +1950,9 @@ gs_plugin_set_property (GObject *object, guint prop_id, const GValue *value, GPa
 	GsPlugin *plugin = GS_PLUGIN (object);
 	GsPluginPrivate *priv = gs_plugin_get_instance_private (plugin);
 	switch (prop_id) {
+	case PROP_ENABLED:
+		gs_plugin_set_enabled (plugin, g_value_get_boolean (value));
+		break;
 	case PROP_FLAGS:
 		priv->flags = g_value_get_flags (value);
 		break;
@@ -1961,6 +1968,9 @@ gs_plugin_get_property (GObject *object, guint prop_id, GValue *value, GParamSpe
 	GsPlugin *plugin = GS_PLUGIN (object);
 	GsPluginPrivate *priv = gs_plugin_get_instance_private (plugin);
 	switch (prop_id) {
+	case PROP_ENABLED:
+		g_value_set_boolean (value, gs_plugin_get_enabled (plugin));
+		break;
 	case PROP_FLAGS:
 		g_value_set_flags (value, priv->flags);
 		break;
@@ -1979,6 +1989,11 @@ gs_plugin_class_init (GsPluginClass *klass)
 	object_class->set_property = gs_plugin_set_property;
 	object_class->get_property = gs_plugin_get_property;
 	object_class->finalize = gs_plugin_finalize;
+
+	pspec = g_param_spec_boolean ("enabled", NULL, NULL,
+				      TRUE,
+				      G_PARAM_READWRITE);
+	g_object_class_install_property (object_class, PROP_ENABLED, pspec);
 
 	pspec = g_param_spec_flags ("flags", NULL, NULL,
 				    GS_TYPE_PLUGIN_FLAGS, GS_PLUGIN_FLAGS_NONE,

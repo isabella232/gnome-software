@@ -90,6 +90,7 @@ enum {
 	SIGNAL_UPDATES_CHANGED,
 	SIGNAL_RELOAD,
 	SIGNAL_BASIC_AUTH_START,
+	SIGNAL_PLUGIN_ENABLED,
 	SIGNAL_LAST
 };
 
@@ -2126,6 +2127,19 @@ gs_plugin_loader_reload_cb (GsPlugin *plugin,
 }
 
 static void
+gs_plugin_loader_notify_enabled_cb (GsPlugin *plugin,
+				    GParamSpec *param,
+				    GsPluginLoader *plugin_loader)
+{
+	g_debug ("emitting plugin-enabled for '%s' (enabled:%d)",
+		 gs_plugin_get_name (plugin),
+		 gs_plugin_get_enabled (plugin));
+	g_signal_emit (plugin_loader,
+		       signals[SIGNAL_PLUGIN_ENABLED],
+		       0, plugin);
+}
+
+static void
 gs_plugin_loader_open_plugin (GsPluginLoader *plugin_loader,
 			      const gchar *filename)
 {
@@ -2155,6 +2169,9 @@ gs_plugin_loader_open_plugin (GsPluginLoader *plugin_loader,
 			  plugin_loader);
 	g_signal_connect (plugin, "allow-updates",
 			  G_CALLBACK (gs_plugin_loader_allow_updates_cb),
+			  plugin_loader);
+	g_signal_connect (plugin, "notify::enabled",
+			  G_CALLBACK (gs_plugin_loader_notify_enabled_cb),
 			  plugin_loader);
 	gs_plugin_set_soup_session (plugin, plugin_loader->soup_session);
 	gs_plugin_set_locale (plugin, plugin_loader->locale);
@@ -2789,6 +2806,11 @@ gs_plugin_loader_class_init (GsPluginLoaderClass *klass)
 			      G_TYPE_FROM_CLASS (object_class), G_SIGNAL_RUN_LAST,
 			      0, NULL, NULL, g_cclosure_marshal_generic,
 			      G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_POINTER, G_TYPE_POINTER);
+	signals [SIGNAL_PLUGIN_ENABLED] =
+		g_signal_new ("plugin-enabled",
+			      G_TYPE_FROM_CLASS (object_class), G_SIGNAL_RUN_LAST,
+			      0, NULL, NULL, g_cclosure_marshal_VOID__OBJECT,
+			      G_TYPE_NONE, 1, GS_TYPE_PLUGIN);
 }
 
 static void

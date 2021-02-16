@@ -119,10 +119,32 @@ struct GsPluginData {
 	gchar			*distro;
 	gchar			*user_hash;
 	gchar			*review_server;
+	GMutex			 review_server_lock;
+	gulong			 review_server_changed_id;
 	GArray			*ratings;  /* (element-type GsOdrsRating) (mutex ratings_mutex) (owned) (nullable) */
 	GMutex			 ratings_mutex;
 	GsApp			*cached_origin;
 };
+
+static void
+gs_plugin_odrs_review_server_changed_cb (GSettings *settings,
+					 const gchar *key,
+					 GsPlugin *plugin)
+{
+	GsPluginData *priv = gs_plugin_get_data (plugin);
+	g_autofree gchar *review_server = NULL;
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+	review_server = g_settings_get_string (settings, "review-server");
+	if (g_strcmp0 (review_server, priv->review_server) != 0) {
+		g_free (priv->review_server);
+		priv->review_server = g_steal_pointer (&review_server);
+
+		gs_plugin_set_enabled (plugin, priv->review_server && priv->review_server[0] != '\0');
+		gs_app_set_origin_hostname (priv->cached_origin, priv->review_server);
+	}
+}
 
 void
 gs_plugin_initialize (GsPlugin *plugin)
@@ -132,9 +154,12 @@ gs_plugin_initialize (GsPlugin *plugin)
 	g_autoptr(GsOsRelease) os_release = NULL;
 
 	g_mutex_init (&priv->ratings_mutex);
+	g_mutex_init (&priv->review_server_lock);
 	priv->settings = g_settings_new ("org.gnome.software");
-	priv->review_server = g_settings_get_string (priv->settings,
-						     "review-server");
+	priv->review_server_changed_id =
+		g_signal_connect (priv->settings, "changed::review-server",
+			G_CALLBACK (gs_plugin_odrs_review_server_changed_cb), plugin);
+	priv->review_server = NULL;
 	priv->ratings = NULL;  /* until first refreshed */
 
 	/* get the machine+user ID hash value */
@@ -160,7 +185,8 @@ gs_plugin_initialize (GsPlugin *plugin)
 	/* add source */
 	priv->cached_origin = gs_app_new (gs_plugin_get_name (plugin));
 	gs_app_set_kind (priv->cached_origin, AS_COMPONENT_KIND_REPOSITORY);
-	gs_app_set_origin_hostname (priv->cached_origin, priv->review_server);
+
+	gs_plugin_odrs_review_server_changed_cb (priv->settings, NULL, plugin);
 
 	/* add the source to the plugin cache which allows us to match the
 	 * unique ID to a GsApp when creating an event */
@@ -277,6 +303,13 @@ gs_plugin_refresh (GsPlugin *plugin,
 	g_autofree gchar *uri = NULL;
 	g_autoptr(GError) error_local = NULL;
 	g_autoptr(GsApp) app_dl = gs_app_new (gs_plugin_get_name (plugin));
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+	if (priv->review_server == NULL || priv->review_server[0] == '\0')
+		return TRUE;
+	uri = g_strdup_printf ("%s/ratings", priv->review_server);
+	g_clear_pointer (&locker, g_mutex_locker_free);
 
 	/* check cache age */
 	cache_filename = gs_utils_get_cache_filename ("odrs",
@@ -298,7 +331,6 @@ gs_plugin_refresh (GsPlugin *plugin,
 	}
 
 	/* download the complete file */
-	uri = g_strdup_printf ("%s/ratings", priv->review_server);
 	g_debug ("Updating ODRS cache from %s to %s", uri, cache_filename);
 	gs_app_set_summary_missing (app_dl,
 				    /* TRANSLATORS: status text when downloading */
@@ -329,8 +361,11 @@ gs_plugin_destroy (GsPlugin *plugin)
 	g_free (priv->distro);
 	g_free (priv->review_server);
 	g_clear_pointer (&priv->ratings, g_array_unref);
+	if (priv->review_server_changed_id)
+		g_signal_handler_disconnect (priv->settings, priv->review_server_changed_id);
 	g_object_unref (priv->settings);
 	g_object_unref (priv->cached_origin);
+	g_mutex_clear (&priv->review_server_lock);
 	g_mutex_clear (&priv->ratings_mutex);
 }
 
@@ -646,6 +681,12 @@ gs_plugin_odrs_refine_ratings (GsPlugin *plugin,
 	g_autoptr(GPtrArray) reviewable_ids = NULL;
 	g_autoptr(GMutexLocker) locker = NULL;
 
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+	if (priv->review_server == NULL || priv->review_server[0] == '\0')
+		return TRUE;
+
+	g_clear_pointer (&locker, g_mutex_locker_free);
+
 	/* get ratings for each reviewable ID */
 	reviewable_ids = _gs_app_get_reviewable_ids (app);
 
@@ -764,6 +805,12 @@ gs_plugin_odrs_fetch_for_app (GsPlugin *plugin, GsApp *app, GError **error)
 	g_autoptr(JsonGenerator) json_generator = NULL;
 	g_autoptr(JsonNode) json_root = NULL;
 	g_autoptr(SoupMessage) msg = NULL;
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+
+	if (priv->review_server == NULL || priv->review_server[0] == '\0')
+		return g_ptr_array_new ();
 
 	/* look in the cache */
 	cachefn_basename = g_strdup_printf ("%s.json", gs_app_get_id (app));
@@ -780,6 +827,8 @@ gs_plugin_odrs_fetch_for_app (GsPlugin *plugin, GsApp *app, GError **error)
 		mapped_file = g_mapped_file_new (cachefn, FALSE, error);
 		if (mapped_file == NULL)
 			return NULL;
+
+		g_clear_pointer (&locker, g_mutex_locker_free);
 
 		g_debug ("got review data for %s from %s",
 			 gs_app_get_id (app), cachefn);
@@ -827,6 +876,9 @@ gs_plugin_odrs_fetch_for_app (GsPlugin *plugin, GsApp *app, GError **error)
 	uri = g_strdup_printf ("%s/fetch", priv->review_server);
 	g_debug ("Updating ODRS cache for %s from %s to %s; request %s", gs_app_get_id (app),
 		 uri, cachefn, data);
+
+	g_clear_pointer (&locker, g_mutex_locker_free);
+
 	msg = soup_message_new (SOUP_METHOD_POST, uri);
 	soup_message_set_request (msg, "application/json; charset=utf-8",
 				  SOUP_MEMORY_COPY, data, strlen (data));
@@ -1030,6 +1082,15 @@ gs_plugin_review_submit (GsPlugin *plugin,
 	g_autoptr(JsonBuilder) builder = NULL;
 	g_autoptr(JsonGenerator) json_generator = NULL;
 	g_autoptr(JsonNode) json_root = NULL;
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+
+	if (priv->review_server == NULL || priv->review_server[0] == '\0') {
+		g_set_error_literal (error, GS_PLUGIN_ERROR, GS_PLUGIN_ERROR_NOT_SUPPORTED,
+			"The ODRS plugin is disabled");
+		return FALSE;
+	}
 
 	/* save as we don't re-request the review from the server */
 	as_review_add_flags (review, AS_REVIEW_FLAG_SELF);
@@ -1079,20 +1140,37 @@ gs_plugin_review_submit (GsPlugin *plugin,
 
 	/* POST */
 	uri = g_strdup_printf ("%s/submit", priv->review_server);
+	g_clear_pointer (&locker, g_mutex_locker_free);
 	return gs_plugin_odrs_json_post (plugin, gs_plugin_get_soup_session (plugin),
 						    uri, data, error);
 }
 
 static gboolean
-gs_plugin_odrs_vote (GsPlugin *plugin, AsReview *review,
-		     const gchar *uri, GError **error)
+gs_plugin_odrs_vote (GsPlugin *plugin,
+		     AsReview *review,
+		     const gchar *path,
+		     GError **error)
 {
 	GsPluginData *priv = gs_plugin_get_data (plugin);
 	const gchar *tmp;
 	g_autofree gchar *data = NULL;
+	g_autofree gchar *uri = NULL;
 	g_autoptr(JsonBuilder) builder = NULL;
 	g_autoptr(JsonGenerator) json_generator = NULL;
 	g_autoptr(JsonNode) json_root = NULL;
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+
+	if (priv->review_server == NULL || priv->review_server[0] == '\0') {
+		g_set_error_literal (error, GS_PLUGIN_ERROR, GS_PLUGIN_ERROR_NOT_SUPPORTED,
+			"The ODRS plugin is disabled");
+		return FALSE;
+	}
+
+	uri = g_strdup_printf ("%s/%s", priv->review_server, path);
+
+	g_clear_pointer (&locker, g_mutex_locker_free);
 
 	/* create object with vote data */
 	builder = json_builder_new ();
@@ -1147,10 +1225,7 @@ gs_plugin_review_report (GsPlugin *plugin,
 			 GCancellable *cancellable,
 			 GError **error)
 {
-	GsPluginData *priv = gs_plugin_get_data (plugin);
-	g_autofree gchar *uri = NULL;
-	uri = g_strdup_printf ("%s/report", priv->review_server);
-	return gs_plugin_odrs_vote (plugin, review, uri, error);
+	return gs_plugin_odrs_vote (plugin, review, "report", error);
 }
 
 gboolean
@@ -1160,10 +1235,7 @@ gs_plugin_review_upvote (GsPlugin *plugin,
 			 GCancellable *cancellable,
 			 GError **error)
 {
-	GsPluginData *priv = gs_plugin_get_data (plugin);
-	g_autofree gchar *uri = NULL;
-	uri = g_strdup_printf ("%s/upvote", priv->review_server);
-	return gs_plugin_odrs_vote (plugin, review, uri, error);
+	return gs_plugin_odrs_vote (plugin, review, "upvote", error);
 }
 
 gboolean
@@ -1173,10 +1245,7 @@ gs_plugin_review_downvote (GsPlugin *plugin,
 			   GCancellable *cancellable,
 			   GError **error)
 {
-	GsPluginData *priv = gs_plugin_get_data (plugin);
-	g_autofree gchar *uri = NULL;
-	uri = g_strdup_printf ("%s/downvote", priv->review_server);
-	return gs_plugin_odrs_vote (plugin, review, uri, error);
+	return gs_plugin_odrs_vote (plugin, review, "downvote", error);
 }
 
 gboolean
@@ -1186,10 +1255,7 @@ gs_plugin_review_dismiss (GsPlugin *plugin,
 			  GCancellable *cancellable,
 			  GError **error)
 {
-	GsPluginData *priv = gs_plugin_get_data (plugin);
-	g_autofree gchar *uri = NULL;
-	uri = g_strdup_printf ("%s/dismiss", priv->review_server);
-	return gs_plugin_odrs_vote (plugin, review, uri, error);
+	return gs_plugin_odrs_vote (plugin, review, "dismiss", error);
 }
 
 gboolean
@@ -1199,10 +1265,7 @@ gs_plugin_review_remove (GsPlugin *plugin,
 			 GCancellable *cancellable,
 			 GError **error)
 {
-	GsPluginData *priv = gs_plugin_get_data (plugin);
-	g_autofree gchar *uri = NULL;
-	uri = g_strdup_printf ("%s/remove", priv->review_server);
-	return gs_plugin_odrs_vote (plugin, review, uri, error);
+	return gs_plugin_odrs_vote (plugin, review, "remove", error);
 }
 
 static GsApp *
@@ -1233,12 +1296,25 @@ gs_plugin_add_unvoted_reviews (GsPlugin *plugin,
 	g_autoptr(GPtrArray) reviews = NULL;
 	g_autoptr(SoupMessage) msg = NULL;
 
+	g_autoptr(GMutexLocker) locker = NULL;
+
+	locker = g_mutex_locker_new (&priv->review_server_lock);
+
+	if (priv->review_server == NULL || priv->review_server[0] == '\0') {
+		g_set_error_literal (error, GS_PLUGIN_ERROR, GS_PLUGIN_ERROR_NOT_SUPPORTED,
+			"The ODRS plugin is disabled");
+		return FALSE;
+	}
+
 	/* create the GET data *with* the machine hash so we can later
 	 * review the application ourselves */
 	uri = g_strdup_printf ("%s/moderate/%s/%s",
 			       priv->review_server,
 			       priv->user_hash,
 			       gs_plugin_get_locale (plugin));
+
+	g_clear_pointer (&locker, g_mutex_locker_free);
+
 	msg = soup_message_new (SOUP_METHOD_GET, uri);
 	status_code = soup_session_send_message (gs_plugin_get_soup_session (plugin), msg);
 	if (status_code != SOUP_STATUS_OK) {
