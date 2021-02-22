@@ -49,7 +49,7 @@ struct _GsApplication {
 #ifdef HAVE_PACKAGEKIT
 	GsDbusHelper	*dbus_helper;
 #endif
-	GsShellSearchProvider *search_provider;
+	GsShellSearchProvider *search_provider;  /* (nullable) (owned) */
 	GSettings       *settings;
 	GSimpleActionGroup	*action_map;
 	guint		 shell_loaded_handler_id;
