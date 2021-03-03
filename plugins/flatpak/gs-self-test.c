@@ -1470,16 +1470,23 @@ gs_plugins_flatpak_app_update_func (GsPluginLoader *plugin_loader)
 	g_assert_no_error (error);
 	g_assert_true (list_updates != NULL);
 
-	/* make sure there are two entries */
+	/* make sure there is one entry */
 	g_assert_cmpint (gs_app_list_length (list_updates), ==, 1);
 	for (guint i = 0; i < gs_app_list_length (list_updates); i++) {
 		app_tmp = gs_app_list_index (list_updates, i);
 		g_debug ("got update %s", gs_app_get_unique_id (app_tmp));
 	}
 
-	/* check they are the same GObject */
-	app_tmp = gs_app_list_lookup (list_updates, "*/flatpak/test/org.test.Chiron/*");
-	g_assert_true (app_tmp == app);
+	/* check that the runtime is not the update's one */
+	old_runtime = gs_app_get_runtime (app);
+	g_assert_true (old_runtime != NULL);
+	g_assert_cmpstr (gs_app_get_branch (old_runtime), !=, "new_master");
+
+	g_object_ref (old_runtime);
+
+	/* use the returned app, which can differ from that previous */
+	app = gs_app_list_lookup (list_updates, "*/flatpak/test/org.test.Chiron/*");
+	g_assert_nonnull (app);
 	g_assert_cmpint (gs_app_get_state (app), ==, GS_APP_STATE_UPDATABLE_LIVE);
 	g_assert_cmpstr (gs_app_get_update_details (app), ==, "Version 1.2.4:\nThis is best.\n\nVersion 1.2.3:\nThis is better.");
 	g_assert_cmpstr (gs_app_get_update_version (app), ==, "1.2.4");
@@ -1501,11 +1508,6 @@ gs_plugins_flatpak_app_update_func (GsPluginLoader *plugin_loader)
 		g_signal_connect (app, "notify::progress",
 				  G_CALLBACK (update_app_progress_notify_cb),
 				  &progress_cnt);
-
-	/* check that the runtime is not the update's one */
-	old_runtime = gs_app_get_runtime (app);
-	g_assert_true (old_runtime != NULL);
-	g_assert_cmpstr (gs_app_get_branch (old_runtime), !=, "new_master");
 
 	/* use a mainloop so we get the events in the default context */
 	g_object_unref (plugin_job);
@@ -1584,6 +1586,8 @@ gs_plugins_flatpak_app_update_func (GsPluginLoader *plugin_loader)
 	g_assert_no_error (error);
 	g_assert_true (ret);
 	g_assert_cmpint (gs_app_get_state (app_source), ==, GS_APP_STATE_UNAVAILABLE);
+
+	g_object_unref (old_runtime);
 }
 
 static void
@@ -1734,8 +1738,7 @@ gs_plugins_flatpak_runtime_extension_func (GsPluginLoader *plugin_loader)
 	g_assert_null (app_tmp);
 
 	/* check that the app has an update (it's affected by the extension's update) */
-	app_tmp = gs_app_list_lookup (list_updates, "*/flatpak/test/org.test.Chiron/*");
-	g_assert_true (app_tmp == app);
+	app = gs_app_list_lookup (list_updates, "*/flatpak/test/org.test.Chiron/*");
 	g_assert_cmpint (gs_app_get_state (app), ==, GS_APP_STATE_UPDATABLE_LIVE);
 
 	/* care about signals */
@@ -1779,6 +1782,12 @@ gs_plugins_flatpak_runtime_extension_func (GsPluginLoader *plugin_loader)
 	g_assert_true (got_progress_installing);
 	g_assert_cmpint (pending_app_changed_cnt, ==, 0);
 
+	/* The install refreshes GsApp-s cache, thus re-get the extension */
+	g_clear_object (&extension);
+	extension = gs_plugin_loader_app_create (plugin_loader,
+			"user/flatpak/*/org.test.Chiron.Extension/master");
+	g_assert_nonnull (extension);
+
 	/* check the extension's state after the update */
 	g_assert_cmpint (gs_app_get_state (extension), ==, GS_APP_STATE_INSTALLED);
 
@@ -1788,8 +1797,28 @@ gs_plugins_flatpak_runtime_extension_func (GsPluginLoader *plugin_loader)
 	g_signal_handler_disconnect (app, notify_state_id);
 	g_signal_handler_disconnect (app, notify_progress_id);
 
+	g_clear_object (&list);
+	/* Reload the 'app', as it could change due to repo change */
+	g_object_unref (plugin_job);
+	plugin_job = gs_plugin_job_newv (GS_PLUGIN_ACTION_SEARCH,
+					 "search", "Bingo",
+					 "refine-flags", GS_PLUGIN_REFINE_FLAGS_DEFAULT |
+							 GS_PLUGIN_REFINE_FLAGS_REQUIRE_RUNTIME,
+					 NULL);
+	list = gs_plugin_loader_job_process (plugin_loader, plugin_job, NULL, &error);
+	gs_test_flush_main_context ();
+	g_assert_no_error (error);
+	g_assert_nonnull (list);
+
+	/* make sure there is one entry, the flatpak app */
+	g_assert_cmpint (gs_app_list_length (list), ==, 1);
+	app = gs_app_list_index (list, 0);
+	g_assert_cmpstr (gs_app_get_id (app), ==, "org.test.Chiron");
+	g_assert_cmpint (gs_app_get_state (app), ==, GS_APP_STATE_INSTALLED);
+
 	/* getting the runtime for later removal */
 	runtime = gs_app_get_runtime (app);
+	g_assert_nonnull (runtime);
 
 	/* remove the app */
 	g_object_unref (plugin_job);
